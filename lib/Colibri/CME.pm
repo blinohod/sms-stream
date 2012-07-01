@@ -112,5 +112,19 @@ sub format_dlr_date {
 	return undef;
 
 }
+
+sub auth_esme {
+
+	my ( $this, $system_id, $password, $remote_ip ) = @_;
+
+	my $sql = "select * from stream.customers where login=? and password=? and active limit 1";
+	if ( my $res = $this->{dbh}->selectrow_hashref( $sql, undef, $system_id, $password ) ) {
+		return $res;
+	} else {
+		return undef;
+	}
+
+}
+
 1;
 
