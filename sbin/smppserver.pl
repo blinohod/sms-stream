@@ -10,6 +10,8 @@ use mro 'c3';
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 
+use base 'Colibri::App';
+
 use Getopt::Long qw(:config auto_version auto_help pass_through);
 use Config::General;
 use DBI;
@@ -17,9 +19,11 @@ use IO::Select;
 use IO::Socket::INET;
 use Net::SMPP;
 use Time::HiRes qw(sleep time);
+use JSON;
 
 use Colibri::Utils;
 use Colibri::CME;
+use Colibri::DBI;
 
 # Debug and development
 use Data::Dumper;
@@ -67,61 +71,80 @@ use constant STATUS_TAB => {
 	ESME_RSUBMITFAIL => 0x45,    # submit_sm or submit_multi failed
 };
 
-my $DEBUG;                       # Send debug output to STDOUT
-my $DAEMON;                      # Run as daemon
-my $CONF_FILE;                   # Path to configuration file
-my $CONF = {};                   # Configuration
-my $LISTENER;
-my $SELECTOR;
-my $DBH;
 my $ESME = {};                   # ESME descriptors hash reference
 
-initialize();
-main_loop();
-finalize();
+__PACKAGE__->mk_accessors(
+	'dbh',
+	'cme',
+	'listener',
+	'selector',
+);
+
+__PACKAGE__->debug(1);
+
+__PACKAGE__->run_app(
+	conf_file        => './sms-stream.conf',    # configuration file
+	smpp_listen_addr => '0.0.0.0',              # all interfaces
+	smpp_listen_port => 2775,                   # defult SMPP port by IANA
+);
 
 1;
 
 # ****************************************************************
 # Processing subroutines
 
-sub main_loop {
+sub get_event {
 
-	while (1) {
-		# Wait for incoming events on SMPP sockets
-		my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $SELECTOR, undef, undef, 0.0005 );
+	my ($this) = @_;
 
-		if ( $sel_r and @$sel_r ) {
-			foreach my $reader ( @{$sel_r} ) {
+	WAIT_EVENT:
 
-				if ( $reader eq $LISTENER ) {
+	unless ( $this->{_continue_processing} ) {
+		return undef;
+	}
 
-					# New incoming connection
-					warn "Connect!\n";
-					_accept_connect();
+	my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, 0.0005 );
 
-				} else {
+	if ( $sel_r and @$sel_r ) {
+		return $sel_r;
+	} else {
+		goto WAIT_EVENT;
+	}
 
-					# Find corresponding TCP socket
-					my ($esme) = grep { $_->{conn} eq $reader } values %$ESME;
+}
 
-					# Process SMPP traffic from client (ESME)
-					_process_client($esme);
+sub process {
 
-				}
+	my ( $this, $sockets ) = @_;
 
-			}
+	foreach my $reader ( @{$sockets} ) {
 
-		} ## end if ( $sel_r and @$sel_r)
-	} ## end while (1)
+		if ( $reader eq $this->listener ) {
 
-} ## end sub main_loop
+			# New incoming connection
+			$this->accept_connect();
 
-sub _accept_connect {
+		} else {
 
-	if ( my $conn = $LISTENER->accept() ) {
+			# Find corresponding TCP socket
+			my ($esme) = grep { $_->{conn} eq $reader } values %$ESME;
 
-		$SELECTOR->add($conn);
+			# Process SMPP traffic from client (ESME)
+			$this->process_client($esme);
+
+		}
+
+	}
+
+} ## end sub process
+
+sub accept_connect {
+
+	my ($this) = @_;
+
+	if ( my $conn = $this->listener->accept() ) {
+
+		$this->selector->add($conn);
 
 		my $conn_id = $conn->peerhost . ':' . $conn->peerport;
 
@@ -130,6 +153,7 @@ sub _accept_connect {
 			conn             => $conn,       # TCP socket
 			auth             => 0,
 			system_id        => undef,
+			customer_id      => undef,
 			system_type      => undef,
 			role             => undef,       # ROLE_RECEIVER, ROLE_TRANSMITTER, ROLE_TRANSCEIVER
 			protocol_version => undef,       # V33, V34
@@ -140,11 +164,11 @@ sub _accept_connect {
 		warn "Can't accept()\n";
 	}
 
-} ## end sub _accept_connect
+} ## end sub accept_connect
 
-sub _process_client {
+sub process_client {
 
-	my $esme = shift;
+	my ( $this, $esme ) = @_;
 
 	warn "Data received on SMPP socket\n";
 
@@ -164,17 +188,17 @@ sub _process_client {
 
 			if ( $cmd eq 'enquire_link' ) {
 
-				cmd_enquire_link( $esme, $pdu );    # send enquire_link_resp
+				$this->cmd_enquire_link( $esme, $pdu );    # send enquire_link_resp
 
 			} elsif ( $cmd eq 'submit_sm' ) {
 
-				cmd_submit_sm( $esme, $pdu );
+				$this->cmd_submit_sm( $esme, $pdu );
 
 			} elsif ( $cmd eq 'unbind' ) {
 
 				# Send unbind_resp and disconnect
-				cmd_unbind( $esme, $pdu );
-				_disconnect_esme($esme);
+				$this->cmd_unbind( $esme, $pdu );
+				$this->disconnect_esme($esme);
 
 			} else {
 				# proc_wrong($pdu);
@@ -185,13 +209,13 @@ sub _process_client {
 			# Unauthenticated
 			if ( $cmd =~ /bind_(transceiver|transmitter|receiver)/ ) {
 
-				cmd_bind( $esme, $pdu );
+				$this->cmd_bind( $esme, $pdu );
 
 			} else {
 
 				# Known command but not allowed in this state
-				_resp_error( $esme, $pdu, STATUS_TAB->{ESME_RINVBNDSTS} );
-				_disconnect_esme($esme);
+				$this->resp_error( $esme, $pdu, STATUS_TAB->{ESME_RINVBNDSTS} );
+				$this->disconnect_esme($esme);
 
 			}
 
@@ -200,31 +224,34 @@ sub _process_client {
 	} elsif ( $esme->{conn}->eof() ) {
 
 		# Process disconnection of ESME
-		_disconnect_esme($esme);
+		$this->disconnect_esme($esme);
 		return;
 
 	}
 
-} ## end sub _process_client
+} ## end sub process_client
 
-sub _disconnect_esme {
+sub disconnect_esme {
 
-	my ($esme) = @_;
+	my ( $this, $esme ) = @_;
 
-	$SELECTOR->remove( $esme->{conn} );    # remove socket from select()
-	$esme->{conn}->close();                # close socket()
-	delete( $ESME->{ $esme->{id} } );      # remove ESME from handlers list
+	$this->selector->remove( $esme->{conn} );    # remove socket from select()
+	$esme->{conn}->close();                      # close socket()
+	delete( $ESME->{ $esme->{id} } );            # remove ESME from handlers list
 
 }
 
 sub cmd_submit_sm {
 
-	my ( $esme, $pdu ) = @_;
+	my ( $this, $esme, $pdu ) = @_;
 
 	warn Dumper($pdu);
 
 	# Do not allow submit_sm for receiver ESME
 	if ( $esme->{role} eq ROLE_RECEIVER ) {
+
+		$this->trace("Retrieved submit_sm in receiver mode1");
+
 		$esme->{conn}->submit_sm_resp(
 			seq        => $pdu->{seq},
 			status     => STATUS_TAB->{ESME_RSUBMITFAIL},
@@ -285,15 +312,47 @@ sub cmd_submit_sm {
 		$udh = bytes::substr( $msg_text, 0, $udhl + 1 );
 		$msg_text = bytes::substr( $msg_text, $udhl + 1 );
 		no bytes;
-		$udh = conv_str_hex($udh);
+		$udh = str_to_hex($udh);
 	}
 
+	# Prepare body
+	# For text use UTF-8, for binary - hexdump
+	my $body = '';
+	if ( $coding eq 0 ) { $body = str_recode( $msg_text, 'GSM0338', 'UTF-8' ); }
+	if ( $coding eq 2 ) { $body = str_recode( $msg_text, 'UCS-2BE', 'UTF-8' ); }
+
+	if ( $coding eq 1 ) { $body = str_to_hex($msg_text); }
+
+	my $res = $this->cme->insert_msg(
+		dir         => 'MT',
+		customer_id => $esme->{customer_id},
+		src_app_id  => $this->cme->get_app_id('app_smppd'),
+		dst_app_id  => $this->cme->get_app_id('app_hlr'),
+		src_addr    => $src_addr,
+		dst_addr    => $dst_addr,
+		udh         => $udh,
+		body        => $body,
+		coding      => $coding,
+		mclass      => $mclass,
+		reg_dlr     => $pdu->{registered_delivery},
+		prio        => $pdu->{priority_flag},
+		#orig_pdu    => to_json(bless $pdu, 'HASH'),
+	);
+
+	if ($res) {
+
+		$esme->{conn}->submit_sm_resp(
+			seq        => $pdu->{seq},
+			status     => STATUS_TAB->{RINV_ROK},
+			message_id => $res->{id},
+		);
+	}
 
 } ## end sub cmd_submit_sm
 
 sub cmd_unbind {
 
-	my ( $esme, $pdu ) = @_;
+	my ( $this, $esme, $pdu ) = @_;
 
 	$esme->{conn}->unbind_resp(
 		seq    => $pdu->{seq},
@@ -304,7 +363,7 @@ sub cmd_unbind {
 
 sub cmd_enquire_link {
 
-	my ( $esme, $pdu ) = @_;
+	my ( $this, $esme, $pdu ) = @_;
 
 	$esme->{conn}->enquire_link_resp(
 		seq    => $pdu->{seq},
@@ -315,7 +374,7 @@ sub cmd_enquire_link {
 
 sub cmd_bind {
 
-	my ( $esme, $pdu ) = @_;
+	my ( $this, $esme, $pdu ) = @_;
 
 	my $cmd = CMD_TAB->{ $pdu->{cmd} };    # SMPP commend name (bind_transceiver, bind_transmitter, bind_receiver)
 
@@ -324,16 +383,17 @@ sub cmd_bind {
 	my $password    = $pdu->{password};
 	my $system_type = $pdu->{system_type};
 
-	debug( "Auth request [%s]: ip=%s, system_id=%s, password=%s, system_type=%s", $cmd, $remote_ip, $system_id, $password, $system_type );
+	#debug( "Auth request [%s]: ip=%s, system_id=%s, password=%s, system_type=%s", $cmd, $remote_ip, $system_id, $password, $system_type );
 
 	my $resp_status = STATUS_TAB->{ESME_RINVPASWD};
 
 	# Try to authenticate ESME using system-id and password
-	if ( _auth_esme( $remote_ip, $system_id, $password ) ) {
+	if ( my $customer = $this->cme->auth_esme( $system_id, $password, $remote_ip ) ) {
 
-		$resp_status                        = STATUS_TAB->{RINV_OK};
-		$ESME->{ $esme->{id} }->{auth}      = 1;                       # Authenticated
-		$ESME->{ $esme->{id} }->{system_id} = $system_id;              # system ID (login)
+		$resp_status                          = STATUS_TAB->{RINV_OK};
+		$ESME->{ $esme->{id} }->{auth}        = 1;                       # Authenticated
+		$ESME->{ $esme->{id} }->{system_id}   = $system_id;              # system ID (login)
+		$ESME->{ $esme->{id} }->{customer_id} = $customer->{id};         # customer ID
 
 	}
 
@@ -353,28 +413,14 @@ sub cmd_bind {
 
 	# Disconnect if unsuccessful authentication
 	unless ( $esme->{auth} ) {
-		_disconnect_esme($esme);
+		$this->disconnect_esme($esme);
 	}
 
 } ## end sub cmd_bind
 
-sub _auth_esme {
+sub resp_error {
 
-	my ( $remote_ip, $system_id, $password ) = @_;
-
-	my $res = $DBH->selectrow_hashref( "select * from stream.customers where login=? and password=? and active limit 1", undef, $system_id, $password );
-	if ($res) {
-		warn Dumper($res);
-	} else {
-		return undef;
-	}
-
-	return 1;
-}
-
-sub _resp_error {
-
-	my ( $esme, $pdu, $status ) = @_;
+	my ( $this, $esme, $pdu, $status ) = @_;
 
 	my $cmd = CMD_TAB->{ $pdu->{cmd} };
 
@@ -402,116 +448,66 @@ sub _resp_error {
 
 	}
 
-} ## end sub _resp_error
+} ## end sub resp_error
 
 # ****************************************************************
 # Initialization subroutines
 
-sub initialize {
+sub post_initialize_hook {
 
-	_init_defaults();
-	_init_cli();
-	_init_config();
-	#_init_sig_handlers();
-	_init_dbi();
-	_init_socket();
+	my ($this) = @_;
 
-}
-
-sub _init_defaults {
-
-	$DEBUG = 1;
-
-	$CONF_FILE = './smppserver.conf';    # local configuration
-
-	$CONF->{listen_addr} = '0.0.0.0';    # all interfaces
-	$CONF->{listen_port} = 2775;         # defult SMPP port by IANA
+	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
+	$this->cme( Colibri::CME->new( dbh => $this->dbh ) );
+	$this->init_socket();
+	$this->init_alarm();
 
 }
 
-sub _init_cli {
+sub init_socket {
 
-	# Get command line arguments
-	GetOptions(
-		'conf=s'  => \$CONF_FILE,
-		'debug!'  => \$DEBUG,
-		'daemon!' => \$DAEMON,
+	my ($this) = @_;
+
+	if ( $this->conf->{smpp_listen_addr} ) { $this->{smpp_listen_addr} = $this->conf->{smpp_listen_addr}; }
+	if ( $this->conf->{smpp_listen_port} ) { $this->{smpp_listen_port} = $this->conf->{smpp_listen_port}; }
+
+	$this->listener(
+		Net::SMPP->new_listen(
+			$this->{smpp_listen_addr},
+			port              => $this->{smpp_listen_port},
+			interface_version => 0x00,
+			smpp_version      => 0x34,
+			addr_ton          => 0x00,
+			addr_npi          => 0x01,
+			source_addr_ton   => 0x00,
+			source_addr_npi   => 0x01,
+			dest_addr_ton     => 0x00,
+			dest_addr_npi     => 0x01,
+			ReuseAddr         => 1,
+			ReusePort         => 1,
+		)
 	);
 
-}
-
-sub _init_config {
-}
-
-sub _init_sig_handlers {
-
-	$| = 1;
-
-	$SIG{HUP} = sub {
-		warn "HUP!\n";
-	};
-
-	$SIG{TERM} = sub {
-		warn "TERM!\n";
-	};
-
-	$SIG{INT} = sub {
-		warn "INT !\n";
-	};
-
-	$SIG{PIPE} = sub {
-		warn "PIPE !\n";
-	};
-
-} ## end sub _init_sig_handlers
-
-sub _init_dbi {
-
-	$DBH = DBI->connect( 'dbi:Pg:dbname=stream;host=192.168.1.53', 'misha', '' ) or die "Cannot connect to DBMS";
-}
-
-sub _init_socket {
-
-	$LISTENER = Net::SMPP->new_listen(
-		$CONF->{listen_addr},
-		port              => $CONF->{listen_port},
-		interface_version => 0x00,
-		smpp_version      => 0x34,
-		addr_ton          => 0x00,
-		addr_npi          => 0x01,
-		source_addr_ton   => 0x00,
-		source_addr_npi   => 0x01,
-		dest_addr_ton     => 0x00,
-		dest_addr_npi     => 0x01,
-		ReuseAddr         => 1,
-		ReusePort         => 1,
-	);
-
-	unless ($LISTENER) {
-		die( sprintf( "Cannot open listen socket on %s:%s\n%s", $CONF->{listen_addr}, $CONF->{listen_port}, $@ ) );
+	unless ( $this->listener ) {
+		die( sprintf( "Cannot open listen socket on %s:%s\n%s", $this->{smpp_listen_addr}, $this->{smpp_listen_port}, $@ ) );
 	}
 
-	debug( "Opened listening socket on %s:%s\n", $CONF->{listen_addr}, $CONF->{listen_port} );
+	#debug( "Opened listening socket on %s:%s\n", $this->conf->{listen_addr}, $this->conf->{listen_port} );
 
 	# Add listening socket to select()
-	$SELECTOR = IO::Select->new($LISTENER);
+	$this->selector( IO::Select->new( $this->listener ) );
 
-} ## end sub _init_socket
+} ## end sub init_socket
 
-# ****************************************************************
-# Finalization subroutines
+sub init_alarm {
 
-sub finalize {
+	my ($this) = @_;
 
-}
+	$SIG{ALRM} = sub {
+		warn "ALRM!\n";
+		alarm 1;
+	};
 
-# ****************************************************************
-# Supplementary subroutines
-
-sub debug {
-
-	my ( $msg, @params ) = @_;
-	if ($DEBUG) { printf( "$msg\n", @params ); }
+	alarm 1;
 
 }
-
