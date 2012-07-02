@@ -221,7 +221,8 @@ sub send {
 	if ( $res->is_success ) {
 		return $res->content;
 	} else {
-		return $this->error( $res->status_line );
+		#return $this->error( $res->status_line );
+		return undef;
 	}
 
 } ## end sub send
@@ -243,7 +244,8 @@ sub receive {
 		return %ret;
 
 	} else {
-		return $this->error("Unknown message type received");
+		#return $this->error("Unknown message type received");
+		return undef;
 	}
 
 } ## end sub receive
@@ -457,7 +459,8 @@ sub status {
 
 		# Catch exceptions
 		if ($@) {
-			return $this->error("Can't parse XML from Kannel API");
+			#return $this->error("Can't parse XML from Kannel API");
+			return undef;
 		}
 
 		# ==========================
@@ -520,7 +523,8 @@ sub status {
 	} ## end if ( $res->is_success )
 
 	else {
-		return $this->error( "Can't retrieve Kannel status: " . $res->status_line );
+		#return $this->error( "Can't retrieve Kannel status: " . $res->status_line );
+		return undef;
 	}
 
 } ## end sub status
@@ -613,7 +617,8 @@ sub _send_cmd {
 		return $res->content;
 	} else {
 		# Error - send error string
-		return $this->error( $res->status_line );
+		#return $this->error( $res->status_line );
+		return undef;
 	}
 
 } ## end sub _send_cmd
