@@ -80,7 +80,7 @@ sub _initialize {
 
 	# Create syslog handler
 	if ( !$this->logger ) {
-		my $log_mask = $this->debug ? 'debug' : 'warning';
+		my $log_mask = $this->debug ? 'debug' : 'info';
 		$this->logger( Colibri::Logger->new( name => $this->{name}, mask => $log_mask ) );
 		$this->log( "debug", "Logger started" );
 	}
