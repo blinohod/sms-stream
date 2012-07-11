@@ -12,8 +12,6 @@ use Colibri::Logger;    # API to syslog daemon
 use Colibri::Conf;      # Configuration file processor
 use Colibri::Utils;     # Supplementary routines
 
-use Proc::Daemon;       # Daemonization
-use Proc::PID::File;    # Managing PID files
 use Getopt::Long qw(:config auto_version auto_help pass_through);
 
 use constant CONF_DIR => '/etc/Colibri';
@@ -27,30 +25,23 @@ sub run_app {
 	my $app = $class->new(@_) or die 'Cannot start application';
 
 	# Initialization
-	if ( $app->can('pre_initialize_hook') ) { $app->pre_initialize_hook(); }    # pre-init
-	$app->_initialize();                                                        # init
-	if ( $app->can('post_initialize_hook') ) { $app->post_initialize_hook(); }  # post-init
+	$app->_initialize();
+	if ( $app->can('start_hook') ) {
+		$app->start_hook();
+	}
 
-	# Main process loop
-	while ( my $event = $app->get_event() ) {                                   # get-event
-
-		# Dispatch to proper method
-		my $proc_sub = 'process';
-		if ( $app->can('dispatch') ) { $proc_sub = $app->dispatch($event); }    # dispatch
-
-		my $pre_hook  = 'pre_' . $proc_sub . '_hook';
-		my $post_hook = 'post_' . $proc_sub . '_hook';
-
-		if ( $app->can($pre_hook) )  { $app->$pre_hook($event); }               # pre-proc
-		if ( $app->can($proc_sub) )  { $app->$proc_sub($event); }               # proc
-		if ( $app->can($post_hook) ) { $app->$post_hook($event); }              # post-proc
-
+	# Main process
+	if ( $app->can('process') ) {
+		$app->process();
+	} else {
+		die 'FATAL: process() method is not defined.';
 	}
 
 	# Finalization
-	if ( $app->can('pre_finialize_hook') ) { $app->pre_finialize_hook(); }      # pre-fin
-	$app->_finalize();                                                          # fin
-	if ( $app->can('post_finialize_hook') ) { $app->post_finialize_hook(); }    # post-fin
+	if ( $app->can('stop_hook') ) {
+		$app->stop_hook();
+	}
+	$app->_finalize();
 
 } ## end sub run_app
 
@@ -59,12 +50,10 @@ sub new {
 	my ( $class, %params ) = @_;
 
 	my $this = $class->SUPER::new(
-		name                 => undef,                                          # application name
-		daemon               => undef,                                          # daemonize if 1
-		pid_file             => undef,                                          # check PID file if 1
-		conf_file            => undef,                                          # configuration file name
-		infinite             => undef,                                          # is infinite loop
-		_continue_processing => 1,                                              # Next iteration to be processed
+		name      => undef,    # application name
+		daemon    => undef,    # daemonize if 1
+		pid_file  => undef,    # check PID file if 1
+		conf_file => undef,    # configuration file name
 		%params,
 	);
 
@@ -72,41 +61,17 @@ sub new {
 
 }
 
-__PACKAGE__->mk_accessors('name');                                              # Application name (for logs and diagnostics)
-__PACKAGE__->mk_accessors('pid_file');                                          # PID file path
+__PACKAGE__->mk_accessors('name');        # Application name (for logs and diagnostics)
+__PACKAGE__->mk_accessors('pid_file');    # PID file path
 __PACKAGE__->mk_accessors('conf_file');
 __PACKAGE__->mk_accessors('daemon');
-__PACKAGE__->mk_accessors('infinite');
-
-sub get_event {
-
-	my ($this) = @_;
-
-	unless ( $this->{_continue_processing} ) {
-		return undef;
-	}
-
-	unless ( $this->infinite() ) {
-		$this->{_continue_processing} = undef;
-	}
-
-	sleep 1;
-	return 1;
-}
-
-sub process {
-	my ( $this, $event ) = @_;
-	$this->trace('Fake iteration');
-	sleep 1;
-	return 1;
-}
 
 sub _initialize {
 
 	my ( $this, %params ) = @_;
 
-	$this->_determine_name();    # determine application name from process name
-	$this->_get_cli_params();    # process standard CLI parameters
+	$this->_determine_name();             # determine application name from process name
+	$this->_get_cli_params();             # process standard CLI parameters
 
 	# Daemonize, if needed
 	if ( $this->daemon() ) {
@@ -137,8 +102,6 @@ sub _initialize {
 		}
 
 	}
-
-	$this->_init_sig_handlers();
 
 } ## end sub _initialize
 
@@ -202,29 +165,12 @@ sub _set_pid_file {
 
 } ## end sub _set_pid_file
 
-sub _init_sig_handlers {
-
-	my ($this) = @_;
-
-	# Add signal handlers
-	$SIG{INT} = sub {
-		$this->trace("Caught SIGINT");
-		$this->{_continue_processing} = 0;
-	};
-
-	$SIG{TERM} = sub {
-		$this->trace("Caught SIGTERM");
-		$this->{_continue_processing} = 0;
-	};
-
-}
-
 sub _finalize {
 	my ( $this, $msg ) = @_;
 
 	# Remove PID file
 	if ( $this->pid_file ) {
-		$this->log( 'debug', 'Remove PID-file' );
+		$this->log( 'debug', 'Remove PID file: ' );
 		unlink $this->pid_file;
 	}
 
