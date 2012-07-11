@@ -14,8 +14,6 @@ use Colibri::Utils;     # Supplementary routines
 
 use Getopt::Long qw(:config auto_version auto_help pass_through);
 
-use constant CONF_DIR => '/etc/Colibri';
-
 use POSIX;
 
 sub run_app {
