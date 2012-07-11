@@ -33,23 +33,23 @@ sub new {
 
 sub log {
 
-	my ( $this, $level, $msg ) = @_;
+	my ( $this, $level, $msg, @params ) = @_;
 
 	# Logger expected to provide "log()" method
 	if ( $this->logger() and $this->logger()->can('log') ) {
-		$this->logger->log( $level, $msg );
+		$this->logger->log( $level, sprintf( $msg, @params ) );
 	} else {
-		warn "LOG: [$level] $msg\n";
+		warn sprintf( "LOG: [$level] $msg\n", @params );
 	}
 
 }
 
 sub trace {
 
-	my ( $this, $msg ) = @_;
+	my ( $this, $msg, @params ) = @_;
 
 	if ( $this->debug ) {
-		warn "$msg\n";
+		warn sprintf( "$msg\n", @params );
 	}
 
 }
@@ -60,6 +60,10 @@ __END__
 
 =head1 NAME
 
-Colibri::Classs
+Colibri::Base - base class for Colibri applications
+
+=head1 SYNOPSIS
+
+use base 'Colibri::Base';
 
 =cut
