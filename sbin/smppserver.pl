@@ -93,48 +93,38 @@ __PACKAGE__->run_app(
 # ****************************************************************
 # Processing subroutines
 
-sub get_event {
+sub process {
 
 	my ($this) = @_;
 
-	WAIT_EVENT:
+	while (1) {
 
-	unless ( $this->{_continue_processing} ) {
-		return undef;
-	}
+		my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, 0.5 );
 
-	my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, 0.0005 );
+		if ( $sel_r and @$sel_r ) {
 
-	if ( $sel_r and @$sel_r ) {
-		return $sel_r;
-	} else {
-		goto WAIT_EVENT;
-	}
+			foreach my $reader ( @{$sel_r} ) {
 
-}
+				if ( $reader eq $this->listener ) {
 
-sub process {
+					# New incoming connection
+					$this->accept_connect();
 
-	my ( $this, $sockets ) = @_;
+				} else {
 
-	foreach my $reader ( @{$sockets} ) {
+					# Find corresponding TCP socket
+					my ($esme) = grep { $_->{conn} eq $reader } values %$ESME;
 
-		if ( $reader eq $this->listener ) {
+					# Process SMPP traffic from client (ESME)
+					$this->process_client($esme);
 
-			# New incoming connection
-			$this->accept_connect();
+				}
 
-		} else {
+			}
 
-			# Find corresponding TCP socket
-			my ($esme) = grep { $_->{conn} eq $reader } values %$ESME;
+		} ## end if ( $sel_r and @$sel_r)
 
-			# Process SMPP traffic from client (ESME)
-			$this->process_client($esme);
-
-		}
-
-	}
+	} ## end while (1)
 
 } ## end sub process
 
@@ -323,7 +313,7 @@ sub cmd_submit_sm {
 
 	if ( $coding eq 1 ) { $body = str_to_hex($msg_text); }
 
-	my $res = $this->cme->insert_msg(
+	my $res = $this->cme->msg_insert(
 		dir         => 'MT',
 		customer_id => $esme->{customer_id},
 		src_app_id  => $this->cme->get_app_id('app_smppd'),
@@ -453,7 +443,7 @@ sub resp_error {
 # ****************************************************************
 # Initialization subroutines
 
-sub post_initialize_hook {
+sub start_hook {
 
 	my ($this) = @_;
 
