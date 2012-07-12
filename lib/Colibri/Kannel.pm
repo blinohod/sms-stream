@@ -410,6 +410,18 @@ sub receive_dlr {
 		$this->{reject_code} = $1;
 	}
 
+	# Process optional SMPP TLV (meta=%D)
+	if ( $cgi->param('meta') ) {
+		my $meta_str = $cgi->param('meta');
+		$ret{meta} = {};
+		if ( $meta_str =~ /^\?smpp\?(.*)$/ ) {
+			foreach my $tlv_par ( split /\&/, $1 ) {
+				my ( $tag, $val ) = split /\=/, $tlv_par;
+				$ret{meta}->{$tag} = $val;
+			}
+		}
+	}
+
 	return %ret;
 
 } ## end sub receive_dlr
@@ -425,7 +437,7 @@ sub make_dlr_url {
 	my $dlr_url = $this->{dlr_url};
 	if ( $params{dlr_url} ) { $dlr_url = $params{dlr_url}; }
 
-	$dlr_url .= "?type=dlr&msgid=$msgid&smsid=%F&from=%p&to=%P&time=%t&unixtime=%T&dlr=%d&dlrmsg=%A";
+	$dlr_url .= "?type=dlr&msgid=$msgid&smsid=%F&from=%p&to=%P&time=%t&unixtime=%T&dlr=%d&dlrmsg=%A&meta=%D";
 
 	return conv_str_uri($dlr_url);
 
