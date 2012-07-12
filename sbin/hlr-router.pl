@@ -27,13 +27,12 @@ __PACKAGE__->mk_accessors(
 );
 
 __PACKAGE__->debug(1);
+
 __PACKAGE__->run_app(
 	conf_file => './sms-stream.conf',
 );
 
-1;
-
-sub post_initialize_hook {
+sub start_hook {
 
 	my ($this) = @_;
 
@@ -43,96 +42,85 @@ sub post_initialize_hook {
 
 }
 
-sub get_event {
+sub process {
 
 	my ($this) = @_;
 
-	# Return to this point if no new messages in queue
-	FETCH_MSG:
-
-	# Seems we have signal for exit
-	unless ( $this->{_continue_processing} ) {
-		return undef;
-	}
-
-	my (@msgs) = $this->cme->fetch( 'app_hlr', 'NEW', 1 );
-
-	if (@msgs) {
-		$this->trace( "New messages fetched." . Dumper( \@msgs ) );
-		return \@msgs;
-	} else {
-
-		sleep 1;
-		goto FETCH_MSG;
-
-	}
-
-} ## end sub get_event
-
-sub process {
-
-	my ( $this, $msgs ) = @_;
-
-	# Check if HLR lookup needed
-	foreach my $msg (@$msgs) {
-
-		my $msisdn = $msg->{dst_addr};
-		$this->trace("Routing for MSISDN: $msisdn");
-
-		if ( my $dir = $this->cme->find_direction($msisdn) ) {
-
-			$this->trace("Prefix found");
-
-			# Check if HLR request is required
-			if ( $dir->{use_hlr} ) {
-
-				# Send HLR request
-				$this->hlr_request($msg);
-
-			} else {
-
-				$this->trace("Route by direction: MSISD " . $msisdn . " to MNO " . " $dir->{mno_id}");
-
-				# Route by prefix
-				$this->cme->route_to_mno( $msg, $dir->{mno_id} );
-
+	while (1) {
+		my (@msgs) = $this->cme->msg_fetch( 'app_hlr', 'NEW', 1 );
+		if (@msgs) {
+			foreach my $msg (@msgs) {
+				$this->process_msg($msg);
 			}
-
 		} else {
-
-			# Set failed state (no direction)
-			$this->cme->make_fail_reply($msg);
-
+			sleep 1;    # FIXME
 		}
 
-	} ## end foreach my $msg (@$msgs)
+	}
 
-} ## end sub process
+}
 
-sub hlr_request {
+sub process_message {
 
 	my ( $this, $msg ) = @_;
 
-	if ( my $cached = $this->cme->hlr_find_cached( $msg->{dst_addr} ) ) {
+	my $msisdn = $msg->{dst_addr};
 
-		$this->cme->route_by();
-	} else {
+	# Looking for prefix based direction
+	my $dir = $this->cme->find_direction($msisdn);
 
-		$this->trace("No MSISDN in HLR cache - prepare query");
+	# Set failed state (no direction)
+	unless ($dir) {
+		#$this->cme->make_fail_reply($msg);
+		return 1;
+	}
 
-		# Send HLR lookup query using SMPP
-		my $res = $this->kannel->send(
-			from     => $msg->{src_addr},
-			to       => $msg->{dst_addr},
-			text     => '',
-			smsc     => $this->conf->{hlr}->{smsc},    # Dedicated SMSC for HLR Lookup
-			dlr_mask => 3,                             # Successful and unsuccessful
-			dlr_id   => $msg->{id},
-		);
+	$this->log( 'debug', 'Found prefix: MSISDN %s => MNO %s', $msisdn, $dir->{mno_id} );
 
-		$this->trace( "Return from Kannel HLR: " . $res );
+	# Route by prefix without HLR lookup
+	unless ( $dir->{use_hlr} ) {
+
+		$this->log( 'debug', 'HLR lookup not required for direction: MSISDN %s', $msisdn );
+		$this->cme->route_by_mno( $msg, $dir->{mno_id} );
+		return 1;
 
 	}
 
-} ## end sub hlr_request
+	# Route by cached MNO ID
+	if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
 
+		$this->cme->route_by_mno( $msg, $cached->{mno_id} );
+		return 1;
+
+	}
+
+	# Send HLR lookup query via Kannel
+	$this->trace("No MSISDN in HLR cache - prepare query");
+
+	$this->send_hlr_query($msg);
+	$this->cme->msg_update(
+		$msg->{id},
+		status => 'PROCESSING',
+	);
+
+} ## end sub process_message
+
+sub send_hlr_query {
+
+	my ( $this, $msg ) = @_;
+
+	# Send HLR lookup query using SMPP
+	my $res = $this->kannel->send(
+		from     => 'lookup',
+		to       => $msg->{dst_addr},
+		text     => 'lookup',
+		smsc     => $this->conf->{hlr}->{smsc},    # Dedicated SMSC for HLR Lookup
+		dlr_mask => 3,                             # Successful and unsuccessful
+		dlr_id   => $msg->{id},
+	);
+
+	$this->log( 'debug', 'Return from Kannel HLR: %s', $res );
+
+}
+
+1;
