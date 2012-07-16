@@ -93,6 +93,8 @@ sub new {
 	__PACKAGE__->mk_accessors('default_smsc');
 	__PACKAGE__->mk_accessors('default_timeout');
 
+	__PACKAGE__->mk_accessors('errcode');
+
 	return $this;
 
 } ## end sub new
@@ -217,11 +219,12 @@ sub send {
 	# Send request
 	my $res = $this->{_ua}->request($req);
 
+	$this->errcode(undef);
 	# Analyze response
 	if ( $res->is_success ) {
 		return $res->content;
 	} else {
-		#return $this->error( $res->status_line );
+		$this->errcode( $res->code );
 		return undef;
 	}
 
@@ -241,14 +244,11 @@ sub receive {
 			%ret = $this->receive_dlr($cgi);
 		}
 
-		return %ret;
-
-	} else {
-		#return $this->error("Unknown message type received");
-		return undef;
 	}
 
-} ## end sub receive
+	return %ret;
+
+}
 
 sub receive_mo {
 
@@ -439,7 +439,7 @@ sub make_dlr_url {
 
 	$dlr_url .= "?type=dlr&msgid=$msgid&smsid=%F&from=%p&to=%P&time=%t&unixtime=%T&dlr=%d&dlrmsg=%A&meta=%D";
 
-	return conv_str_uri($dlr_url);
+	return str_to_uri($dlr_url);
 
 }
 
@@ -452,7 +452,7 @@ sub make_meta {
 	my @pairs = map $_ . '=' . $params{$_}, keys %params;
 	$meta_str .= join '&', @pairs;
 
-	return conv_str_uri($meta_str);
+	return str_to_uri($meta_str);
 
 }
 
