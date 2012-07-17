@@ -1,9 +1,7 @@
 DST=$(DESTDIR)/opt/sms-stream
 
-all: prepare install
-
-prepare:
-	mkdir -p $(DST)
+all: install
 
 install:
+	mkdir -p $(DST)
 	cp -rv sbin web lib $(DST)
