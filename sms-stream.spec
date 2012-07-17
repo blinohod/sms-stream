@@ -1,4 +1,6 @@
 %define streamdir /opt/sms-stream
+%define _initdir /etc/rc.d/init.d
+%define _logdir /var/log
 
 %define _perl_lib_path %streamdir/lib
 
@@ -20,7 +22,7 @@ Source0: %name-%version.tar
 
 BuildRequires: make
 
-BuildRequires: perl-CGI perl-Class-Accessor-Class perl-Config-General perl-DBI perl-Encode perl-FCGI perl-Unix-Syslog
+BuildRequires: perl-CGI perl-Class-Accessor-Class perl-Config-General perl-DBI perl-FCGI perl-Unix-Syslog
 
 %description
 SMS Stream bulk SMS gateway platform
@@ -31,7 +33,7 @@ SMS Stream bulk SMS gateway platform
 %build
 
 %install
-%makeinstall_std
+%make_install
 
 %pre
 
