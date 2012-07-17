@@ -1,4 +1,6 @@
-%define homedir /opt/sms-stream
+%define streamdir /opt/sms-stream
+
+%define _perl_lib_path %streamdir/lib
 
 Name: sms-stream
 Version: 2.0
@@ -24,24 +26,24 @@ BuildRequires: perl-CGI perl-Class-Accessor-Class perl-Config-General perl-DBI p
 SMS Stream bulk SMS gateway platform
 
 %prep
-%setup -n %name
+%setup -n %name-%version
 
 %build
 
 %install
-make install
+%makeinstall_std
 
 %pre
 
 %files
-%homedir
-#%doc README samples
-
-%dir %attr(0755,root,root)  %_sysconfdir/NetSDS/admin/mgr
-%config(noreplace) %attr(0644,root,apache) %_sysconfdir/NetSDS/admin/report/*
-%config(noreplace) %attr(0755,root,root) %_sysconfdir/rc.d/init.d/kannel.send-*
+%streamdir
+#%%doc README samples
+#%%dir %%attr(0755,root,root)  %%_sysconfdir/NetSDS/admin/mgr
+#%%config(noreplace) %%attr(0755,root,root) %%_sysconfdir/rc.d/init.d/kannel.send-*
 
 %changelog
-- 
+* Tue Jul 17 2012 Michael Bochkaryov <misha@altlinux.ru> 2.0-alt1
+- Initial build of SMS Stream 2.0
+
 
 
