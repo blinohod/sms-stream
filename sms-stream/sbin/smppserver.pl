@@ -12,9 +12,6 @@ use lib "$FindBin::Bin/../lib";
 
 use base 'Colibri::App';
 
-use Getopt::Long qw(:config auto_version auto_help pass_through);
-use Config::General;
-use DBI;
 use IO::Select;
 use IO::Socket::INET;
 use Net::SMPP;
@@ -78,6 +75,7 @@ __PACKAGE__->mk_accessors(
 	'cme',
 	'listener',
 	'selector',
+	'role',
 );
 
 __PACKAGE__->debug(1);
@@ -94,6 +92,29 @@ __PACKAGE__->run_app(
 # Processing subroutines
 
 sub process {
+
+	my ($this) = @_;
+
+	if ( $this->role eq 'smppd' ) {
+		$this->process_smppd();
+	} else {
+		$this->process_qproc();
+	}
+
+}
+
+sub process_qproc {
+
+	my ($this) = @_;
+
+	while (1) {
+		warn "Qproc\n";
+		sleep 1;
+	}
+
+}
+
+sub process_smppd {
 
 	my ($this) = @_;
 
@@ -126,7 +147,7 @@ sub process {
 
 	} ## end while (1)
 
-} ## end sub process
+} ## end sub process_smppd
 
 sub accept_connect {
 
@@ -447,12 +468,34 @@ sub start_hook {
 
 	my ($this) = @_;
 
+	# Prepare SIGCHLD handler
+	$SIG{CHLD} = sub {
+		warn "Handling child\n";
+		my $waited_pid = wait();
+	};
+
+	# Prepare pair of connected sockets
+	my ( $link_smppd, $link_qproc ) = IO::Socket->socketpair( AF_UNIX, SOCK_STREAM, PF_UNSPEC );
+	my $qproc_pid = fork();
+
+	if ($qproc_pid) {
+
+		$this->role('smppd');
+		close($link_qproc);
+		$this->init_socket();
+
+	} else {
+
+		$this->role('qproc');
+		close($link_smppd);
+		$this->log( 'info', 'Started queue processor with PID %s', $$ );
+
+	}
+
 	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
 	$this->cme( Colibri::CME->new( dbh => $this->dbh ) );
-	$this->init_socket();
-	$this->init_alarm();
 
-}
+} ## end sub start_hook
 
 sub init_socket {
 
