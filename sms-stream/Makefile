@@ -4,4 +4,4 @@ all: install
 
 install:
 	mkdir -p $(DST)
-	cp -rv sbin web lib $(DST)
+	cp -rv etc sbin web lib $(DST)

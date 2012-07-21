@@ -12,14 +12,12 @@ use lib "$FindBin::Bin/../lib";
 
 use base 'Colibri::App';
 
-use Getopt::Long qw(:config auto_version auto_help pass_through);
-use Config::General;
-use DBI;
 use IO::Select;
 use IO::Socket::INET;
 use Net::SMPP;
 use Time::HiRes qw(sleep time);
 use JSON;
+use IPC::ShareLite qw ( :lock );
 
 use Colibri::Utils;
 use Colibri::CME;
@@ -74,18 +72,22 @@ use constant STATUS_TAB => {
 my $ESME = {};                   # ESME descriptors hash reference
 
 __PACKAGE__->mk_accessors(
-	'dbh',
-	'cme',
-	'listener',
-	'selector',
+	'dbh',                       # DBI handler
+	'cme',                       # Core Messaging Engine
+	'listener',                  # Listering TCP socket for SMPP connections
+	'selector',                  # IO::Select handler
+	'role',                      # Program role ('smppd' or 'qproc')
+	'shm',                       # Shared memory segment
+	'link_smppd',
+	'link_qproc',
 );
 
-__PACKAGE__->debug(1);
-
 __PACKAGE__->run_app(
-	conf_file        => './sms-stream.conf',    # configuration file
-	smpp_listen_addr => '0.0.0.0',              # all interfaces
-	smpp_listen_port => 2775,                   # defult SMPP port by IANA
+	conf_file        => '/opt/sms-stream/etc/sms-stream.conf',    # configuration file
+	pid_file         => '/var/run/smppserver.pid',
+	daemon           => 1,
+	smpp_listen_addr => '0.0.0.0',                                # all interfaces
+	smpp_listen_port => 2775,                                     # defult SMPP port by IANA
 );
 
 1;
@@ -94,6 +96,33 @@ __PACKAGE__->run_app(
 # Processing subroutines
 
 sub process {
+
+	my ($this) = @_;
+
+	if ( $this->role eq 'smppd' ) {
+		$this->process_smppd();
+	} else {
+		$this->process_qproc();
+	}
+
+}
+
+sub process_qproc {
+
+	my ($this) = @_;
+
+	while (1) {
+
+		foreach my $customer_id ( keys %{ $this->shm_read() } ) {
+			$this->link_qproc->print("Data\n");
+			sleep 1;
+		}
+
+	}
+
+}
+
+sub process_smppd {
 
 	my ($this) = @_;
 
@@ -110,6 +139,9 @@ sub process {
 					# New incoming connection
 					$this->accept_connect();
 
+				} elsif ( $reader eq $this->link_smppd ) {
+
+					$this->process_from_qproc();
 				} else {
 
 					# Find corresponding TCP socket
@@ -120,13 +152,23 @@ sub process {
 
 				}
 
-			}
+			} ## end foreach my $reader ( @{$sel_r...})
 
 		} ## end if ( $sel_r and @$sel_r)
 
 	} ## end while (1)
 
-} ## end sub process
+} ## end sub process_smppd
+
+sub process_from_qproc {
+
+	my ($this) = @_;
+
+	warn "Data from Qproc\n";
+	my $str = $this->link_smppd->getline();
+	print "D: $str";
+
+}
 
 sub accept_connect {
 
@@ -228,6 +270,8 @@ sub disconnect_esme {
 	$this->selector->remove( $esme->{conn} );    # remove socket from select()
 	$esme->{conn}->close();                      # close socket()
 	delete( $ESME->{ $esme->{id} } );            # remove ESME from handlers list
+
+	$this->shm_write( $this->get_recv_customers() );
 
 }
 
@@ -333,9 +377,18 @@ sub cmd_submit_sm {
 
 		$esme->{conn}->submit_sm_resp(
 			seq        => $pdu->{seq},
-			status     => STATUS_TAB->{RINV_ROK},
+			status     => STATUS_TAB->{ESME_ROK},
 			message_id => $res->{id},
 		);
+
+	} else {
+
+		$esme->{conn}->submit_sm_resp(
+			seq        => $pdu->{seq},
+			status     => STATUS_TAB->{ESME_RSUBMITFAIL},
+			message_id => $res->{id},
+		);
+
 	}
 
 } ## end sub cmd_submit_sm
@@ -346,7 +399,7 @@ sub cmd_unbind {
 
 	$esme->{conn}->unbind_resp(
 		seq    => $pdu->{seq},
-		status => STATUS_TAB->{RINV_OK},
+		status => STATUS_TAB->{ESME_ROK},
 	);
 
 }
@@ -357,7 +410,7 @@ sub cmd_enquire_link {
 
 	$esme->{conn}->enquire_link_resp(
 		seq    => $pdu->{seq},
-		status => STATUS_TAB->{RINV_OK},
+		status => STATUS_TAB->{ESME_ROK},
 	);
 
 }
@@ -380,10 +433,10 @@ sub cmd_bind {
 	# Try to authenticate ESME using system-id and password
 	if ( my $customer = $this->cme->auth_esme( $system_id, $password, $remote_ip ) ) {
 
-		$resp_status                          = STATUS_TAB->{RINV_OK};
-		$ESME->{ $esme->{id} }->{auth}        = 1;                       # Authenticated
-		$ESME->{ $esme->{id} }->{system_id}   = $system_id;              # system ID (login)
-		$ESME->{ $esme->{id} }->{customer_id} = $customer->{id};         # customer ID
+		$resp_status                          = STATUS_TAB->{ESME_ROK};
+		$ESME->{ $esme->{id} }->{auth}        = 1;                        # Authenticated
+		$ESME->{ $esme->{id} }->{system_id}   = $system_id;               # system ID (login)
+		$ESME->{ $esme->{id} }->{customer_id} = $customer->{id};          # customer ID
 
 	}
 
@@ -406,7 +459,46 @@ sub cmd_bind {
 		$this->disconnect_esme($esme);
 	}
 
+	$this->shm_write( $this->get_recv_customers() );
+
 } ## end sub cmd_bind
+
+sub get_recv_customers {
+
+	my ($this) = @_;
+
+	my $data = {};
+
+	foreach my $esme ( values %$ESME ) {
+		next unless ( $esme->{auth} );
+		if ( ( $esme->{role} eq ROLE_TRANSCEIVER ) or ( $esme->{role} eq ROLE_RECEIVER ) ) {
+			$data->{ $esme->{customer_id} } = 1;
+		}
+	}
+
+	return $data;
+}
+
+sub shm_write {
+
+	my ( $this, $data ) = @_;
+
+	$this->shm->lock(LOCK_EX);
+	$this->shm->store( encode_json($data) );
+	$this->shm->unlock();
+
+}
+
+sub shm_read {
+
+	my ($this) = @_;
+
+	$this->shm->lock(LOCK_EX);
+	my $data = decode_json( $this->shm->fetch );
+	$this->shm->unlock;
+
+	return $data;
+}
 
 sub resp_error {
 
@@ -447,11 +539,58 @@ sub start_hook {
 
 	my ($this) = @_;
 
+	# Prepare SIGCHLD handler
+	$SIG{CHLD} = sub {
+		warn "Handling child\n";
+		my $waited_pid = wait();
+	};
+
+	$this->create_shm();
+
+	# Prepare pair of connected sockets
+	my ( $link_smppd, $link_qproc ) = IO::Socket->socketpair( AF_UNIX, SOCK_STREAM, PF_UNSPEC );
+	my $qproc_pid = fork();
+
+	if ($qproc_pid) {
+
+		$0 = 'smppd-main';
+		$this->role('smppd');
+		close($link_qproc);
+		$this->link_smppd($link_smppd);
+		$this->init_socket();
+		$this->selector->add( $this->link_smppd() );
+
+	} else {
+
+		$0 = 'smppd-qproc';
+		$this->role('qproc');
+		close($link_smppd);
+		$this->link_qproc($link_qproc);
+		$this->log( 'info', 'Started queue processor with PID %s', $$ );
+
+	}
+
 	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
 	$this->cme( Colibri::CME->new( dbh => $this->dbh ) );
-	$this->init_socket();
-	$this->init_alarm();
 
+} ## end sub start_hook
+
+sub create_shm {
+
+	my ($this) = @_;
+
+	my $shm_key = 1920;
+
+	my $shm = undef;
+
+	while ( !$shm ) {
+		eval { $shm = IPC::ShareLite->new( -key => $shm_key, -create => 'yes', -destroy => 'yes', ); };
+		if ($@) { $shm_key++; }
+	}
+
+	$this->shm($shm);
+
+	$this->shm_write( {} );
 }
 
 sub init_socket {

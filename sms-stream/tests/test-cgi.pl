@@ -9,14 +9,21 @@ use lib "$FindBin::Bin/../lib";
 
 use Data::Dumper;
 
-use base 'Colibri::App';
+use base 'Colibri::App::FCGI';
 
 use version; our $VERSION = version->declare('v0.1.0');
 
 __PACKAGE__->debug(1);
-__PACKAGE__->run_app(infinite => 0, pid_file => '/tmp/zz.pid', );
+__PACKAGE__->run_app();
 
-#$logger->log( 'error', 'Error message' );
+sub process {
+
+	my ($this, $cgi) = @_;
+
+	warn Dumper($this->cgi);
+
+}
+
 
 1;
 

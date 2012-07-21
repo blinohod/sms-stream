@@ -26,10 +26,10 @@ __PACKAGE__->mk_accessors(
 	'hlr',    # HLR via kannel API
 );
 
-__PACKAGE__->debug(1);
-
 __PACKAGE__->run_app(
-	conf_file => './sms-stream.conf',
+	conf_file => '/opt/sms-stream/etc/sms-stream.conf',
+	pid_file  => '/var/run/hlr-router.pid',
+	daemon    => 1,
 );
 
 sub start_hook {
@@ -50,7 +50,7 @@ sub process {
 		my (@msgs) = $this->cme->msg_fetch( 'app_hlr', 'NEW', 1 );
 		if (@msgs) {
 			foreach my $msg (@msgs) {
-				$this->process_msg($msg);
+				$this->process_message($msg);
 			}
 		} else {
 			sleep 1;    # FIXME
@@ -66,33 +66,99 @@ sub process_message {
 
 	my $msisdn = $msg->{dst_addr};
 
-	# Looking for prefix based direction
+	my $app_kannel_id = $this->cme->get_app_id('app_kannel');
+
+	# Looking for prefix based direction.
 	my $dir = $this->cme->find_direction($msisdn);
 
-	# Set failed state (no direction)
+	# Direction is not found by prefix.
+	# Possibly wrong MSISDN or missed record in "stream.directions" table.
 	unless ($dir) {
-		#$this->cme->make_fail_reply($msg);
+
+		$this->cme->create_dlr(
+			$msg,
+			date_sub => $msg->{created},
+			status   => 'REJECTD',
+		);
+
+		$this->cme->msg_update(
+			$msg->{id},
+			status => 'REJECTED',
+		);
+
 		return 1;
 	}
 
 	$this->log( 'debug', 'Found prefix: MSISDN %s => MNO %s', $msisdn, $dir->{mno_id} );
 
-	# Route by prefix without HLR lookup
+	# For this direction HLR lookup is not supported.
+	# Route by MSISDN prefix only.
 	unless ( $dir->{use_hlr} ) {
 
-		$this->log( 'debug', 'HLR lookup not required for direction: MSISDN %s', $msisdn );
-		$this->cme->route_by_mno( $msg, $dir->{mno_id} );
+		$this->log( 'info', 'HLR lookup not required for direction: MSISDN %s', $msisdn );
+
+		my $smsc_id = $this->cme->route_by_mno( $msg, $dir->{mno_id} );
+		if ($smsc_id) {
+			$this->cme->msg_update(
+				$msg->{id},
+				smsc_id    => $smsc_id,
+				status     => 'ROUTED',
+				dst_app_id => $app_kannel_id,
+			);
+		} else {
+
+			$this->cme->create_dlr(
+				$msg,
+				date_sub => $msg->{created},
+				status   => 'UNDELIV',
+			);
+
+			$this->cme->msg_update(
+				$msg->{id},
+				status => 'FAILED',
+			);
+		}
 		return 1;
 
-	}
+	} ## end unless ( $dir->{use_hlr} )
 
-	# Route by cached MNO ID
+	# Route by cached MNO ID.
 	if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
 
-		$this->cme->route_by_mno( $msg, $cached->{mno_id} );
+		$this->log( 'info', 'Found entry in HLR lookup cache for MSISDN %s', $msisdn );
+
+		# Process invalid MSISDN
+		unless ( $cached->{valid} ) {
+
+			$this->cme->create_dlr(
+				$msg,
+				date_sub => $msg->{created},
+				status   => 'UNDELIV',
+			);
+
+			$this->cme->msg_update(
+				$msg->{id},
+				status => 'FAILED',
+			);
+		}
+
+		my $smsc_id = $this->cme->route_by_mno( $msg, $cached->{mno_id} );
+		if ($smsc_id) {
+			$this->cme->msg_update(
+				$msg->{id},
+				smsc_id    => $smsc_id,
+				status     => 'ROUTED',
+				dst_app_id => $app_kannel_id,
+			);
+		} else {
+			$this->cme->msg_update(
+				$msg->{id},
+				status => 'FAILED',
+			);
+		}
 		return 1;
 
-	}
+	} ## end if ( my $cached = $this...)
 
 	# Send HLR lookup query via Kannel
 	$this->trace("No MSISDN in HLR cache - prepare query");

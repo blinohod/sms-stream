@@ -1,0 +1,10 @@
+Build
+_build
+blib
+Makefile.PL
+META.yml
+*.tar.gz
+*.swp
+MANIFEST*
+.project
+.includepath
