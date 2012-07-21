@@ -245,15 +245,14 @@ sub route_by_mno {
 
 	my ( $this, $msg, $mno_id ) = @_;
 
-	my $sql = "select r.smsc_id, s.name
-			from stream.rules r
-			join stream.smsc s on (r.smsc_id = s.id)
-			where r.mno_id = ?";
+	my $sql = "select smsc_id from stream.rules where mno_id = ?";
 
 	if ( my $row = $this->{dbh}->selectrow_hashref( $sql, undef, $mno_id ) ) {
-		return $row;
+		return $row->{smsc_id};
+	} else {
+		$this->log( 'error', 'Cannot find SMSC for MNO=%s', $mno_id );
+		return undef;
 	}
-	return undef;
 
 }
 
@@ -261,18 +260,18 @@ sub route_by_mccmnc {
 
 	my ( $this, $mcc, $mnc ) = @_;
 
-	my $sql = "select r.smsc_id, s.name
+	my $sql = "select r.smsc_id as smsc_id
 			from stream.rules r
-			join stream.smsc s on (r.smsc_id = s.id)
 			join stream.networks n on (r.mno_id = n.mno_id)
 			where n.mcc = ? and n.mnc = ?";
 
 	my $row = $this->{dbh}->selectrow_hashref( $sql, undef, $mcc, $mnc );
-	unless($row) {
-		$this->log('error', 'Cannot find SMSC for MCC=%s and MNC=%s', $mcc, $mnc);
+	if ($row) {
+		return $row->{smsc_id};
+	} else {
+		$this->log( 'error', 'Cannot find SMSC for MCC=%s and MNC=%s', $mcc, $mnc );
+		return undef;
 	}
-
-	warn Dumper($row);
 
 }
 
