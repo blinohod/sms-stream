@@ -71,6 +71,8 @@ sub process_dlr {
 
 	my ($this) = @_;
 
+	my $app_kannel_id = $this->cme->get_app_id('app_kannel');
+
 	# Parse HTTP request from Kannel
 	my %hlr = $this->kannel->receive( $this->cgi() );
 	$this->log( 'info', 'HLR lookup data received: %s', Dumper( \%hlr ) );
@@ -118,7 +120,20 @@ sub process_dlr {
 		# Find destination SMSC
 		my $smsc_id = $this->cme->route_by_mccmnc( $mcc, $mnc );
 
-		$this->cme->msg_update( $msg_id, status => 'ROUTED', smsc_id => $smsc_id );
+		if ($smsc_id) {
+			$this->cme->msg_update(
+				$msg_id,
+				status     => 'ROUTED',
+				smsc_id    => $smsc_id,
+				dst_app_id => $app_kannel_id,
+			);
+		} else {
+			$this->cme->create_dlr( $mt_sm, status => 'UNDELIV', );
+			$this->cme->msg_update(
+				$msg_id,
+				status => 'FAILED',
+			);
+		}
 
 	} elsif ( $hlr{dlr_state} == Colibri::Kannel::STATE_UNDELIVERABLE ) {
 
@@ -134,11 +149,6 @@ sub process_dlr {
 		$this->cme->msg_update( $msg_id, status => 'UNDELIVERABLE', );
 
 	}
-
-	# Route by cached MNO ID
-	#if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
-	#	$this->cme->route_by_mno( $msg, $cached->{mno_id} );
-	#}
 
 } ## end sub process_dlr
 
