@@ -16,6 +16,11 @@ use version; our $VERSION = version->declare('v0.1.0');
 __PACKAGE__->debug(1);
 __PACKAGE__->run_app(infinite => 0, pid_file => '/tmp/zz.pid', );
 
+sub process {
+
+	print "Application body\n";
+}
+
 #$logger->log( 'error', 'Error message' );
 
 1;
