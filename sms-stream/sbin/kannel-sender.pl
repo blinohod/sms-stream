@@ -26,9 +26,10 @@ __PACKAGE__->mk_accessors(
 	'kannel',    # kannel API
 );
 
-__PACKAGE__->debug(1);
 __PACKAGE__->run_app(
-	conf_file => './sms-stream.conf',
+	conf_file => '/opt/sms-stream/etc/sms-stream.conf',
+	pid_file  => '/var/run/kannel-sender.pid',
+	daemon    => 1,
 );
 
 sub start_hook {

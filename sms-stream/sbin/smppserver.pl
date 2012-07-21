@@ -82,12 +82,12 @@ __PACKAGE__->mk_accessors(
 	'link_qproc',
 );
 
-__PACKAGE__->debug(1);
-
 __PACKAGE__->run_app(
-	conf_file        => './sms-stream.conf',    # configuration file
-	smpp_listen_addr => '0.0.0.0',              # all interfaces
-	smpp_listen_port => 2775,                   # defult SMPP port by IANA
+	conf_file        => '/opt/sms-stream/etc/sms-stream.conf',    # configuration file
+	pid_file         => '/var/run/smppserver.pid',
+	daemon           => 1,
+	smpp_listen_addr => '0.0.0.0',                                # all interfaces
+	smpp_listen_port => 2775,                                     # defult SMPP port by IANA
 );
 
 1;

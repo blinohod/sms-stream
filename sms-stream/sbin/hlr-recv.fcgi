@@ -28,10 +28,8 @@ __PACKAGE__->mk_accessors(
 	'kannel',    # Kannel API
 );
 
-__PACKAGE__->debug(1);
-
 __PACKAGE__->run_app(
-	conf_file => './sms-stream.conf',
+	conf_file => '/opt/sms-stream/etc/sms-stream.conf',
 );
 
 sub start_hook {

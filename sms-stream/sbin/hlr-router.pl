@@ -26,10 +26,10 @@ __PACKAGE__->mk_accessors(
 	'hlr',    # HLR via kannel API
 );
 
-__PACKAGE__->debug(1);
-
 __PACKAGE__->run_app(
-	conf_file => './sms-stream.conf',
+	conf_file => '/opt/sms-stream/etc/sms-stream.conf',
+	pid_file  => '/var/run/hlr-router.pid',
+	daemon    => 1,
 );
 
 sub start_hook {
@@ -106,6 +106,13 @@ sub process_message {
 				dst_app_id => $app_kannel_id,
 			);
 		} else {
+
+			$this->cme->create_dlr(
+				$msg,
+				date_sub => $msg->{created},
+				status   => 'UNDELIV',
+			);
+
 			$this->cme->msg_update(
 				$msg->{id},
 				status => 'FAILED',
@@ -119,6 +126,21 @@ sub process_message {
 	if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
 
 		$this->log( 'info', 'Found entry in HLR lookup cache for MSISDN %s', $msisdn );
+
+		# Process invalid MSISDN
+		unless ( $cached->{valid} ) {
+
+			$this->cme->create_dlr(
+				$msg,
+				date_sub => $msg->{created},
+				status   => 'UNDELIV',
+			);
+
+			$this->cme->msg_update(
+				$msg->{id},
+				status => 'FAILED',
+			);
+		}
 
 		my $smsc_id = $this->cme->route_by_mno( $msg, $cached->{mno_id} );
 		if ($smsc_id) {
