@@ -101,6 +101,7 @@ sub process_message {
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg->{id},
+				mno_id     => $dir->{mno_id},
 				smsc_id    => $smsc_id,
 				status     => 'ROUTED',
 				dst_app_id => $app_kannel_id,
@@ -176,7 +177,7 @@ sub send_hlr_query {
 	my ( $this, $msg ) = @_;
 
 	# Send HLR lookup query using SMPP
-	my $res = $this->kannel->send(
+	my $res = $this->hlr->send(
 		from     => 'lookup',
 		to       => $msg->{dst_addr},
 		text     => 'lookup',
