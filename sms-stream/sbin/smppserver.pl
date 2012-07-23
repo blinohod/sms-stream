@@ -113,10 +113,14 @@ sub process_qproc {
 
 	while (1) {
 
+		$this->trace('MO queue process iteration');
+
 		foreach my $customer_id ( keys %{ $this->shm_read() } ) {
+			$this->log( 'debug', 'Processing queue for customer id=%s', $customer_id );
 			$this->link_qproc->print("Data\n");
-			sleep 1;
 		}
+
+		sleep 1;
 
 	}
 
@@ -541,7 +545,7 @@ sub start_hook {
 
 	# Prepare SIGCHLD handler
 	$SIG{CHLD} = sub {
-		warn "Handling child\n";
+		$this->log( 'warning', 'SIGCHLD retrieved' );
 		my $waited_pid = wait();
 	};
 
@@ -559,6 +563,18 @@ sub start_hook {
 		$this->link_smppd($link_smppd);
 		$this->init_socket();
 		$this->selector->add( $this->link_smppd() );
+
+		$SIG{TERM} = sub {
+			$this->log( 'warning', 'SIGTERM retrieved' );
+			$this->shm(undef);
+			exit;
+		};
+
+		$SIG{INT} = sub {
+			$this->log( 'warning', 'SIGINT retrieved' );
+			$this->shm(undef);
+			exit;
+		};
 
 	} else {
 
@@ -584,14 +600,18 @@ sub create_shm {
 	my $shm = undef;
 
 	while ( !$shm ) {
-		eval { $shm = IPC::ShareLite->new( -key => $shm_key, -create => 'yes', -destroy => 'yes', ); };
+		eval { $shm = IPC::ShareLite->new( -key => $shm_key, -create => 'yes', -destroy => 'yes', -exclusive => 'yes', ); };
 		if ($@) { $shm_key++; }
 	}
 
-	$this->shm($shm);
+	$this->trace( 'Created SHM segment with key %s', $shm_key );
 
+	$this->shm($shm);
 	$this->shm_write( {} );
-}
+
+	return $shm_key;
+
+} ## end sub create_shm
 
 sub init_socket {
 
@@ -628,15 +648,3 @@ sub init_socket {
 
 } ## end sub init_socket
 
-sub init_alarm {
-
-	my ($this) = @_;
-
-	$SIG{ALRM} = sub {
-		warn "ALRM!\n";
-		alarm 1;
-	};
-
-	alarm 1;
-
-}
