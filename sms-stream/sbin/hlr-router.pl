@@ -148,6 +148,7 @@ sub process_message {
 			$this->cme->msg_update(
 				$msg->{id},
 				smsc_id    => $smsc_id,
+				mno_id     => $cached->{mno_id},
 				status     => 'ROUTED',
 				dst_app_id => $app_kannel_id,
 			);
