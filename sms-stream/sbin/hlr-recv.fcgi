@@ -97,11 +97,11 @@ sub process_dlr {
 
 	if ( $hlr{dlr_state} == Colibri::Kannel::STATE_DELIVERED ) {
 
-		if ( $hlr{dlr_msg} =~ /IMSI:\s*(\d+)/ ) {
+		if ( $hlr{dlr_msg} =~ /IMSI:\s*(\d+)/i ) {
 			$imsi = $1;
 		}
 
-		if ( $hlr{dlr_msg} =~ /MCCMNC:\s*(\d\d\d)(\d+)/ ) {
+		if ( $hlr{dlr_msg} =~ /MCCMNC:\s*(\d\d\d)(\d+)/i ) {
 			$mcc = $1;
 			$mnc = $2;
 		}
@@ -116,13 +116,14 @@ sub process_dlr {
 		);
 
 		# Find destination SMSC
-		my $smsc_id = $this->cme->route_by_mccmnc( $mcc, $mnc );
+		my ( $smsc_id, $mno_id ) = $this->cme->route_by_mccmnc( $mcc, $mnc );
 
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg_id,
 				status     => 'ROUTED',
 				smsc_id    => $smsc_id,
+				mno_id     => $mno_id,
 				dst_app_id => $app_kannel_id,
 			);
 		} else {
