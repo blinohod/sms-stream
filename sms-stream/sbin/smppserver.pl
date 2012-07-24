@@ -67,6 +67,7 @@ use constant STATUS_TAB => {
 	ESME_RALYBND     => 0x05,    # ESME Already in Bound State
 	ESME_RINVPASWD   => 0x0E,    # Invalid Password
 	ESME_RSUBMITFAIL => 0x45,    # submit_sm or submit_multi failed
+	ESME_RTHROTTLED  => 0x58,    # Throttling error
 };
 
 my $ESME = {};                   # ESME descriptors hash reference
@@ -194,6 +195,7 @@ sub accept_connect {
 			role             => undef,       # ROLE_RECEIVER, ROLE_TRANSMITTER, ROLE_TRANSCEIVER
 			protocol_version => undef,       # V33, V34
 			connected        => time(),
+			last_submit      => time(),
 		};
 
 	} else {
@@ -299,7 +301,20 @@ sub cmd_submit_sm {
 		return;
 	}
 
-	# TODO - check throttling
+	# Check throttling
+	my $delay = time() - $esme->{last_submit};
+	if ( $delay < ( 1 / $esme->{bandwidth} ) ) {
+
+		$this->log('warning', 'Throttling error from customer (%s)', $esme->{customer_id});
+		$esme->{conn}->submit_sm_resp(
+			seq        => $pdu->{seq},
+			status     => STATUS_TAB->{ESME_RTHROTTLED},
+			message_id => 0,
+		);
+		return 1;
+
+	}
+	$ESME->{ $esme->{id} }->{last_submit} = time();
 
 	# Get source/destination address information
 	my $src_addr     = $pdu->{source_addr};
@@ -438,9 +453,10 @@ sub cmd_bind {
 	if ( my $customer = $this->cme->auth_esme( $system_id, $password, $remote_ip ) ) {
 
 		$resp_status                          = STATUS_TAB->{ESME_ROK};
-		$ESME->{ $esme->{id} }->{auth}        = 1;                        # Authenticated
-		$ESME->{ $esme->{id} }->{system_id}   = $system_id;               # system ID (login)
-		$ESME->{ $esme->{id} }->{customer_id} = $customer->{id};          # customer ID
+		$ESME->{ $esme->{id} }->{auth}        = 1;                         # Authenticated
+		$ESME->{ $esme->{id} }->{system_id}   = $system_id;                # system ID (login)
+		$ESME->{ $esme->{id} }->{customer_id} = $customer->{id};           # customer ID
+		$ESME->{ $esme->{id} }->{bandwidth}   = $customer->{bandwidth};    # bandwidth
 
 	}
 
