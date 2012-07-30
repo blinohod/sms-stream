@@ -97,7 +97,7 @@ sub process_message {
 
 		$this->log( 'info', 'HLR lookup not required for direction: MSISDN %s', $msisdn );
 
-		my $smsc_id = $this->cme->route_by_mno( $msg, $dir->{mno_id} );
+		my $smsc_id = $this->cme->route_by_mno( $dir->{mno_id} );
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg->{id},
@@ -127,6 +127,7 @@ sub process_message {
 	if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
 
 		$this->log( 'info', 'Found entry in HLR lookup cache for MSISDN %s', $msisdn );
+		$this->trace('HLR lookup cached data: %s', Dumper($cached));
 
 		# Process invalid MSISDN
 		unless ( $cached->{valid} ) {
@@ -143,7 +144,8 @@ sub process_message {
 			);
 		}
 
-		my $smsc_id = $this->cme->route_by_mno( $msg, $cached->{mno_id} );
+		my $smsc_id = $this->cme->route_by_mno( $cached->{mno_id} );
+
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg->{id},
