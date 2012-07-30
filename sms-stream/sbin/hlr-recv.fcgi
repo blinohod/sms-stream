@@ -117,6 +117,7 @@ sub process_dlr {
 
 		# Find destination SMSC
 		my ( $smsc_id, $mno_id ) = $this->cme->route_by_mccmnc( $mcc, $mnc );
+		$this->log('info', 'Route by MCC=%s, MNC=%s => SMSC=%s, MNO=%s', $mcc, $mnc, $smsc_id, $mno_id);
 
 		if ($smsc_id) {
 			$this->cme->msg_update(
