@@ -70,7 +70,8 @@ use constant STATUS_TAB => {
 	ESME_RTHROTTLED  => 0x58,    # Throttling error
 };
 
-my $ESME = {};                   # ESME descriptors hash reference
+my $ESME     = {};               # ESME descriptors hash reference
+my $CONTINUE = 1;                # Process should work until flag is true
 
 __PACKAGE__->mk_accessors(
 	'dbh',                       # DBI handler
@@ -100,6 +101,8 @@ sub process {
 
 	my ($this) = @_;
 
+	$| = 1;
+
 	if ( $this->role eq 'smppd' ) {
 		$this->process_smppd();
 	} else {
@@ -112,13 +115,13 @@ sub process_qproc {
 
 	my ($this) = @_;
 
-	while (1) {
+	while ($CONTINUE) {
 
 		$this->trace('MO queue process iteration');
 
 		foreach my $customer_id ( keys %{ $this->shm_read() } ) {
 			$this->log( 'debug', 'Processing queue for customer id=%s', $customer_id );
-			$this->link_qproc->print("Data\n");
+			$this->process_mo_events($customer_id);
 		}
 
 		sleep 1;
@@ -127,11 +130,36 @@ sub process_qproc {
 
 }
 
+sub process_mo_events {
+
+	my ( $this, $customer_id ) = @_;
+
+	# FIXME - hardcode
+	my $sql = "select * from stream.queue
+		where dir = 'DLR'
+		and status = 'ROUTED'
+		and dst_app_id = 1
+		and customer_id = ?
+		order by id asc limit 10";
+
+	my $sth = $this->dbh->prepare($sql);
+	$sth->execute($customer_id);
+
+	while ( my $msg = $sth->fetchrow_hashref() ) {
+
+		$this->trace( 'MO event found %s', Dumper($msg) );
+		my $mo_pack = encode_json($msg);
+		$this->link_qproc->print( $mo_pack . "\n" );
+
+	}
+
+} ## end sub process_mo_events
+
 sub process_smppd {
 
 	my ($this) = @_;
 
-	while (1) {
+	while ($CONTINUE) {
 
 		my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, 0.5 );
 
@@ -145,6 +173,7 @@ sub process_smppd {
 					$this->accept_connect();
 
 				} elsif ( $reader eq $this->link_smppd ) {
+					# New outgoing messages (MO SM, DLR)
 
 					$this->process_from_qproc();
 				} else {
@@ -161,7 +190,7 @@ sub process_smppd {
 
 		} ## end if ( $sel_r and @$sel_r)
 
-	} ## end while (1)
+	} ## end while ($CONTINUE)
 
 } ## end sub process_smppd
 
@@ -169,11 +198,27 @@ sub process_from_qproc {
 
 	my ($this) = @_;
 
-	warn "Data from Qproc\n";
 	my $str = $this->link_smppd->getline();
-	print "D: $str";
 
-}
+	my $msg = undef;
+	eval { $msg = decode_json($str); };
+
+	unless ($msg) {
+		return;
+	}
+
+	$this->trace( 'MO event dump: %s', Dumper($msg) );
+
+	my ($esme) = grep { ( $_->{role} ne ROLE_TRANSMITTER ) and ( $_->{customer_id} eq $msg->{customer_id} ) } values %$ESME;
+
+	unless ($esme) {
+		$this->log( 'error', 'Obtained MO event for wrong ESME' );
+		return;
+	}
+
+	$this->cmd_deliver_sm( $esme, $msg );
+
+} ## end sub process_from_qproc
 
 sub accept_connect {
 
@@ -199,7 +244,7 @@ sub accept_connect {
 		};
 
 	} else {
-		warn "Can't accept()\n";
+		$this->log( 'error', 'Cannot accept() new client!' );
 	}
 
 } ## end sub accept_connect
@@ -207,8 +252,6 @@ sub accept_connect {
 sub process_client {
 
 	my ( $this, $esme ) = @_;
-
-	warn "Data received on SMPP socket\n";
 
 	# Try to read PDU from TCP socket
 	if ( my $pdu = $esme->{conn}->read_pdu() ) {
@@ -281,11 +324,32 @@ sub disconnect_esme {
 
 }
 
+sub cmd_deliver_sm {
+
+	my ( $this, $esme, $msg ) = @_;
+
+	$esme->{conn}->deliver_sm(
+		source_addr_ton  => 0x01,
+		source_addr_npi  => 0x00,
+		source_addr      => $msg->{src_addr},
+		destination_addr => $msg->{dst_addr},
+		esm_class        => 0x04,               # Delivery receipt
+		short_message    => $msg->{body},
+		async            => 1,
+	);
+
+	$this->cme->msg_update(
+		$msg->{id},
+		status => 'DELIVERED',
+	);
+
+} ## end sub cmd_deliver_sm
+
 sub cmd_submit_sm {
 
 	my ( $this, $esme, $pdu ) = @_;
 
-	warn Dumper($pdu);
+	$this->trace( 'New MT SM retrieved: %s', Dumper($pdu) );
 
 	# Do not allow submit_sm for receiver ESME
 	if ( $esme->{role} eq ROLE_RECEIVER ) {
@@ -305,7 +369,7 @@ sub cmd_submit_sm {
 	my $delay = time() - $esme->{last_submit};
 	if ( $delay < ( 1 / $esme->{bandwidth} ) ) {
 
-		$this->log('warning', 'Throttling error from customer (%s)', $esme->{customer_id});
+		$this->log( 'warning', 'Throttling error from customer (%s)', $esme->{customer_id} );
 		$esme->{conn}->submit_sm_resp(
 			seq        => $pdu->{seq},
 			status     => STATUS_TAB->{ESME_RTHROTTLED},
@@ -563,6 +627,8 @@ sub start_hook {
 	$SIG{CHLD} = sub {
 		$this->log( 'warning', 'SIGCHLD retrieved' );
 		my $waited_pid = wait();
+		$this->shm(undef);
+		$CONTINUE = 0;
 	};
 
 	$this->create_shm();
@@ -582,17 +648,31 @@ sub start_hook {
 
 		$SIG{TERM} = sub {
 			$this->log( 'warning', 'SIGTERM retrieved' );
+			kill 15, $qproc_pid;
 			$this->shm(undef);
-			exit;
+			$CONTINUE = 0;
+		};
+
+		$SIG{INT} = sub {
+			$this->log( 'warning', 'SIGINT retrieved' );
+			kill 10, $qproc_pid;
+			$this->shm(undef);
+			$CONTINUE = 0;
+		};
+
+	} else {
+
+		$SIG{TERM} = sub {
+			$this->log( 'warning', 'SIGTERM retrieved' );
+			$this->shm(undef);
+			$CONTINUE = 0;
 		};
 
 		$SIG{INT} = sub {
 			$this->log( 'warning', 'SIGINT retrieved' );
 			$this->shm(undef);
-			exit;
+			$CONTINUE = 0;
 		};
-
-	} else {
 
 		$0 = 'smppd-qproc';
 		$this->role('qproc');
@@ -600,12 +680,20 @@ sub start_hook {
 		$this->link_qproc($link_qproc);
 		$this->log( 'info', 'Started queue processor with PID %s', $$ );
 
-	}
+	} ## end else [ if ($qproc_pid) ]
 
 	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
 	$this->cme( Colibri::CME->new( dbh => $this->dbh ) );
 
 } ## end sub start_hook
+
+sub stop_hook {
+
+	my ($this) = @_;
+
+	$this->log( 'info', 'SMPP server process [%s] finished', $$ );
+
+}
 
 sub create_shm {
 
