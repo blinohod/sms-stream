@@ -213,14 +213,14 @@ sub _get_cli_params {
 
 	# Set debug mode
 	if ( defined $debug ) {
-		$this->debug(1);
-		$this->trace("CLI: debug mode on");
+		$this->debug($debug);
+		$this->trace("CLI: debug mode $debug");
 	}
 
 	# Set daemon mode
 	if ( defined $daemon ) {
-		$this->daemon(1);
-		$this->trace("CLI: daemon mode on");
+		$this->daemon($daemon);
+		$this->trace("CLI: daemon mode $daemon");
 	}
 
 } ## end sub _get_cli_params

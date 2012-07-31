@@ -97,10 +97,11 @@ sub process_message {
 
 		$this->log( 'info', 'HLR lookup not required for direction: MSISDN %s', $msisdn );
 
-		my $smsc_id = $this->cme->route_by_mno( $msg, $dir->{mno_id} );
+		my $smsc_id = $this->cme->route_by_mno( $dir->{mno_id} );
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg->{id},
+				mno_id     => $dir->{mno_id},
 				smsc_id    => $smsc_id,
 				status     => 'ROUTED',
 				dst_app_id => $app_kannel_id,
@@ -126,6 +127,7 @@ sub process_message {
 	if ( my $cached = $this->cme->hlr_find_cached($msisdn) ) {
 
 		$this->log( 'info', 'Found entry in HLR lookup cache for MSISDN %s', $msisdn );
+		$this->trace('HLR lookup cached data: %s', Dumper($cached));
 
 		# Process invalid MSISDN
 		unless ( $cached->{valid} ) {
@@ -142,11 +144,13 @@ sub process_message {
 			);
 		}
 
-		my $smsc_id = $this->cme->route_by_mno( $msg, $cached->{mno_id} );
+		my $smsc_id = $this->cme->route_by_mno( $cached->{mno_id} );
+
 		if ($smsc_id) {
 			$this->cme->msg_update(
 				$msg->{id},
 				smsc_id    => $smsc_id,
+				mno_id     => $cached->{mno_id},
 				status     => 'ROUTED',
 				dst_app_id => $app_kannel_id,
 			);
@@ -176,7 +180,7 @@ sub send_hlr_query {
 	my ( $this, $msg ) = @_;
 
 	# Send HLR lookup query using SMPP
-	my $res = $this->kannel->send(
+	my $res = $this->hlr->send(
 		from     => 'lookup',
 		to       => $msg->{dst_addr},
 		text     => 'lookup',

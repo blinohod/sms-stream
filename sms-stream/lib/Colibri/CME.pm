@@ -97,6 +97,10 @@ sub msg_get_by_id {
 
 }
 
+sub msg_fetch_incoming {
+
+}
+
 sub msg_fetch_outgoing {
 
 	my ( $this, $app_name, $smsc_id, $limit ) = @_;
@@ -132,10 +136,11 @@ sub create_dlr {
 
 	my %reply = (
 		dir         => 'DLR',
+		status      => 'ROUTED',                # Sure, we know where to send DLR
 		ref_id      => $orig->{id},             # Original message ID
 		customer_id => $orig->{customer_id},    # Original message ID
 		src_app_id  => $orig->{dst_app_id},     # Should be ID of 'app_kannel'
-		dst_app_id  => $orig->{src_app_id},     # FIXME - here should be app_smppd
+		dst_app_id  => $orig->{src_app_id},     # Send to application generated original message
 		src_addr    => $orig->{dst_addr},       # MSISDN
 		dst_addr    => $orig->{src_addr},       # Source address (alphanumeric or short code)
 		mno_id      => $orig->{mno_id},
@@ -243,7 +248,7 @@ sub find_direction {
 
 sub route_by_mno {
 
-	my ( $this, $msg, $mno_id ) = @_;
+	my ( $this, $mno_id ) = @_;
 
 	my $sql = "select smsc_id from stream.rules where mno_id = ?";
 
@@ -260,14 +265,14 @@ sub route_by_mccmnc {
 
 	my ( $this, $mcc, $mnc ) = @_;
 
-	my $sql = "select r.smsc_id as smsc_id
+	my $sql = "select r.smsc_id as smsc_id, r.mno_id as mno_id
 			from stream.rules r
 			join stream.networks n on (r.mno_id = n.mno_id)
 			where n.mcc = ? and n.mnc = ?";
 
 	my $row = $this->{dbh}->selectrow_hashref( $sql, undef, $mcc, $mnc );
 	if ($row) {
-		return $row->{smsc_id};
+		return wantarray ? ( $row->{smsc_id}, $row->{mno_id} ) : $row->{smsc_id};
 	} else {
 		$this->log( 'error', 'Cannot find SMSC for MCC=%s and MNC=%s', $mcc, $mnc );
 		return undef;
@@ -299,12 +304,33 @@ sub hlr_store {
 	my $mnc   = $params{mnc} + 0;      # Mobile Network Code
 	my $imsi  = $params{imsi} . '';    # IMSI (SIM card ID)
 
-	my $sql = "insert into stream.hlr_cache (msisdn, valid, mcc, mnc, imsi) values (?, ?, ?, ?, ?) returning *";
-	my $res = $this->{dbh}->selectrow_hashref( $sql, undef, $msisdn, $valid, $mcc, $mnc, $imsi );
+	# Determine MNO first
+	my ($mno_id) = $this->{dbh}->selectrow_array( "select stream.mno_by_mccmnc(?, ?) as mno", undef, $mcc, $mnc );
+
+	$this->log( 'info', 'MNO by MCC/MNC: %s:%s => %s', $mcc, $mnc, $mno_id );
+
+	my $sql = "insert into stream.hlr_cache (msisdn, valid, mcc, mnc, imsi, mno_id) values (?, ?, ?, ?, ?, ?) returning *";
+	my $res = $this->{dbh}->selectrow_hashref( $sql, undef, $msisdn, $valid, $mcc, $mnc, $imsi, $mno_id );
 
 	return $res;
 
-}
+} ## end sub hlr_store
 
+sub get_rate {
+
+	my ( $this, $customer_id, $mno_id ) = @_;
+
+	my $sql = "select price from stream.rates
+		where (customer_id = ? or customer_id is null)
+		and mno_id = ?
+		order by customer_id nulls last limit 1";
+
+	if ( my $res = $this->{dbh}->selectrow_hashref( $sql, undef, $customer_id, $mno_id ) ) {
+		return $res->{price};
+	} else {
+		return undef;
+	}
+
+}
 1;
 

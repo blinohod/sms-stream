@@ -69,9 +69,14 @@ sub process {
 
 					if ($res) {
 
+						# Determine cost of MT SM
+						my $rate = $this->cme->get_rate( $msg->{customer_id}, $msg->{mno_id} ) + 0;
+						$this->trace( 'MT SM cost determined: (customer_id=%s, mno_id=%s) => %s', $msg->{customer_id}, $msg->{mno_id}, $rate );
+
 						$this->cme->msg_update(
 							$msg->{id},
 							status => 'SENT',
+							cost   => $rate,
 						);
 
 					} else {
@@ -140,8 +145,8 @@ sub send_message {
 			udh      => $msg->{udh},
 			charset  => 'UTF-8',
 			mclass   => $msg->{mclass},
-			smsc     => $this->conf->{hlr}->{smsc},    # Dedicated SMSC for HLR Lookup
-			dlr_mask => 3,                             # Successful and unsuccessful
+			smsc     => $smsc,              # SMSC identifier
+			dlr_mask => 3,                  # Successful and unsuccessful
 			dlr_id   => $msg->{id},
 		);
 
