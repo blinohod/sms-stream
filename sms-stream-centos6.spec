@@ -38,6 +38,8 @@ SMS Stream bulk SMS gateway platform
 
 %install
 %make_install
+mkdir -p %buildroot/etc/httpd/conf.d
+install -m 750 setup/centos6/apache.conf %buildroot/etc/httpd/conf.d/sms-stream.conf
 
 %pre
 
@@ -49,6 +51,7 @@ SMS Stream bulk SMS gateway platform
 %streamdir/lib
 %streamdir/web
 %streamdir/setup
+%config(noreplace) %attr(0755,root,root) /etc/httpd/conf.d/sms-stream.conf
 #%%doc README samples
 
 %changelog
