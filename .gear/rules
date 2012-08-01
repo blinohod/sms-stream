@@ -1,1 +1,2 @@
 tar: sms-stream
+spec: sms-stream-centos6.spec
