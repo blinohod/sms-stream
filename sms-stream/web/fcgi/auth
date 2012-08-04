@@ -1,0 +1,50 @@
+#!/usr/bin/env perl 
+
+use 5.8.0;
+use strict;
+use warnings;
+
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
+
+use Data::Dumper;
+use Colibri::DBI;
+
+use base 'Colibri::App::GUI';
+
+use version; our $VERSION = version->declare('v0.1.0');
+
+__PACKAGE__->debug(1);
+__PACKAGE__->run_app( conf_file => '/opt/sms-stream/etc/sms-stream.conf' );
+
+sub action_login {
+
+	my ($this) = @_;
+
+	print $this->cgi->header();
+	my $sth = $this->dbh->prepare('select * from stream.mno');
+	$sth->execute;
+	while ( my $z = $sth->fetchrow_hashref() ) {
+		print Dumper($z);
+	}
+
+}
+
+sub start_hook {
+
+	my $this = shift;
+
+	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
+
+}
+
+1;
+
+__END__
+
+=head1 SYNOPSIS
+
+Opa
+
+
+=cut
