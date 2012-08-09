@@ -136,16 +136,17 @@ sub _set_pid_file {
 		# Check if it's possible read and write PID file
 		unless ( ( -r $pf ) or ( -w $pf ) ) {
 			$this->log( 'fatal', "Wrong permissions on PID file: $pf" );
-			die "Wrong permissions on PID file: $pf";
+			die "Wrong permissions on PID file: $pf\n";
 		}
 
 		my $check_pid = file_read($pf);
 
 		# Check if PID file contains PID and process exists
 		if ( $check_pid =~ /^(\d+)$/ ) {
-			if ( -e "/proc/$1/cmdline" ) {
-				$this->log( 'fatal', 'Process exists with PID file!' );
-				die "Wrong permissions on PID file: $pf";
+			my $pf_content = $1;
+			if ( -e "/proc/$pf_content/cmdline" ) {
+				$this->log( 'fatal', 'Process %s exists with PID file!', $pf_content );
+				die "Process $pf_content exists with PID file: $pf\n";
 			}
 		}
 
@@ -157,7 +158,7 @@ sub _set_pid_file {
 
 	# Write PID file
 	unless ( file_write( $pf, "$pid" ) ) {
-		$this->log( 'error', "Cannot write PID file: $pf" );
+		$this->log( 'error', 'Cannot write PID file: %s', $pf );
 		die "Cannot write PID file: $pf";
 	}
 
@@ -168,7 +169,7 @@ sub _finalize {
 
 	# Remove PID file
 	if ( $this->pid_file ) {
-		$this->log( 'debug', 'Remove PID file: ' );
+		$this->trace( 'Remove PID file: %s', $this->pid_file );
 		unlink $this->pid_file;
 	}
 
