@@ -610,7 +610,7 @@ sub start_hook {
 		$CONTINUE = 0;
 	};
 
-	$this->create_shm();
+	$this->shm_create();
 
 	# Prepare pair of connected sockets
 	my ( $link_smppd, $link_qproc ) = IO::Socket->socketpair( AF_UNIX, SOCK_STREAM, PF_UNSPEC );
@@ -674,7 +674,7 @@ sub stop_hook {
 
 }
 
-sub create_shm {
+sub shm_create {
 
 	my ($this) = @_;
 
@@ -694,7 +694,7 @@ sub create_shm {
 
 	return $shm_key;
 
-} ## end sub create_shm
+} ## end sub shm_create
 
 sub shm_write {
 
