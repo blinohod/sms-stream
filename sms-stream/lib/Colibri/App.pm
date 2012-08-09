@@ -80,7 +80,7 @@ sub _initialize {
 	if ( !$this->logger ) {
 		my $log_mask = $this->debug ? 'debug' : 'info';
 		$this->logger( Colibri::Logger->new( name => $this->{name}, mask => $log_mask ) );
-		$this->log( "debug", "Logger started" );
+		$this->trace( 'Syslog initialized with mask [%s]', $log_mask );
 	}
 
 	# Process PID file if necessary
