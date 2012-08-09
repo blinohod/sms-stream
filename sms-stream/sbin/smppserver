@@ -161,7 +161,7 @@ sub process_smppd {
 
 	while ($CONTINUE) {
 
-		my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, 0.5 );
+		my ( $sel_r, $sel_w, $sel_x ) = IO::Select->select( $this->selector, undef, undef, undef );
 
 		if ( $sel_r and @$sel_r ) {
 
@@ -655,7 +655,7 @@ sub start_hook {
 
 		$SIG{INT} = sub {
 			$this->log( 'warning', 'SIGINT retrieved' );
-			kill 10, $qproc_pid;
+			kill 2, $qproc_pid;
 			$this->shm(undef);
 			$CONTINUE = 0;
 		};
