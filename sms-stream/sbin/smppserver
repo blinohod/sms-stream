@@ -563,27 +563,6 @@ sub get_recv_customers {
 	return $data;
 }
 
-sub shm_write {
-
-	my ( $this, $data ) = @_;
-
-	$this->shm->lock(LOCK_EX);
-	$this->shm->store( encode_json($data) );
-	$this->shm->unlock();
-
-}
-
-sub shm_read {
-
-	my ($this) = @_;
-
-	$this->shm->lock(LOCK_EX);
-	my $data = decode_json( $this->shm->fetch );
-	$this->shm->unlock;
-
-	return $data;
-}
-
 sub resp_error {
 
 	my ( $this, $esme, $pdu, $status ) = @_;
@@ -716,6 +695,27 @@ sub create_shm {
 	return $shm_key;
 
 } ## end sub create_shm
+
+sub shm_write {
+
+	my ( $this, $data ) = @_;
+
+	$this->shm->lock(LOCK_EX);
+	$this->shm->store( encode_json($data) );
+	$this->shm->unlock();
+
+}
+
+sub shm_read {
+
+	my ($this) = @_;
+
+	$this->shm->lock(LOCK_EX);
+	my $data = decode_json( $this->shm->fetch );
+	$this->shm->unlock;
+
+	return $data;
+}
 
 sub init_socket {
 
