@@ -49,6 +49,7 @@ sub trace {
 	my ( $this, $msg, @params ) = @_;
 
 	if ( $this->debug ) {
+		$this->log( 'debug', $msg, @params );
 		warn sprintf( "$msg\n", @params );
 	}
 
