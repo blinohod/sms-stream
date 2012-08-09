@@ -742,13 +742,29 @@ sub init_socket {
 	);
 
 	unless ( $this->listener ) {
+		$this->log( 'fatal', 'Cannot open listen socket on %s:%s', $this->{smpp_listen_addr}, $this->{smpp_listen_port} );
 		die( sprintf( "Cannot open listen socket on %s:%s\n%s", $this->{smpp_listen_addr}, $this->{smpp_listen_port}, $@ ) );
 	}
 
-	#debug( "Opened listening socket on %s:%s\n", $this->conf->{listen_addr}, $this->conf->{listen_port} );
+	$this->trace( 'Opened listening socket on %s:%s', $this->{smpp_listen_addr}, $this->{smpp_listen_port} );
 
 	# Add listening socket to select()
 	$this->selector( IO::Select->new( $this->listener ) );
 
 } ## end sub init_socket
 
+__END__
+
+=head1 SYNOPSIS
+
+smppserver [options]
+
+Options:
+
+	--[no]daemon -- run service as a daemon (backgroung mode). Default: daemon
+	
+	--[no]debug -- generate debug output. Default: no debug
+	
+	--conf /path/to/config.file -- set alternative path to configuration file
+
+=cut
