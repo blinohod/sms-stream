@@ -57,8 +57,7 @@ sub process {
 
 		foreach my $smsc (@links) {
 
-			#$this->trace( 'Processing SMSC: %s', Dumper($smsc) );
-			$this->log( 'debug', 'Processing SMSC: %s (bandwidth=%s)', $smsc->{name}, $smsc->{bandwidth} );
+			$this->trace( 'Processing SMSC: %s (bandwidth=%s)', $smsc->{name}, $smsc->{bandwidth} );
 
 			my @msgs = $this->cme->msg_fetch_outgoing( 'app_kannel', $smsc->{id}, $smsc->{bandwidth} * $period );
 			if (@msgs) {
