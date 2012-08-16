@@ -148,6 +148,13 @@ sub process_mo_events {
 	while ( my $msg = $sth->fetchrow_hashref() ) {
 
 		$this->trace( 'MO event found %s', Dumper($msg) );
+
+		# Avoid processing the same message on next iteration
+		$this->cme->msg_update(
+			$msg->{id},
+			status => 'PROCESSING',
+		);
+
 		my $mo_pack = encode_json($msg);
 		$this->link_qproc->print( $mo_pack . "\n" );
 
