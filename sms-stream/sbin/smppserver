@@ -104,9 +104,9 @@ sub process {
 	$| = 1;
 
 	if ( $this->role eq 'smppd' ) {
-		$this->process_smppd();
+		$this->process_smppd();    # SMPP server process
 	} else {
-		$this->process_qproc();
+		$this->process_qproc();    # MO queue process
 	}
 
 }
