@@ -270,7 +270,14 @@ sub process_client {
 
 		}
 
+		# Determine command name by ID
 		my $cmd = CMD_TAB->{ $pdu->{cmd} };
+
+		# If ESME is authenticated allow the following commands:
+		#
+		# * enquire_link - keepalive messages
+		# * submit_sm - sending MT SM
+		# * unbind - disconnect
 
 		if ( $esme->{auth} ) {
 
@@ -294,7 +301,7 @@ sub process_client {
 
 		} else {
 
-			# Unauthenticated
+			# If ESME is NOT authenticated allow only authentication
 			if ( $cmd =~ /bind_(transceiver|transmitter|receiver)/ ) {
 
 				$this->cmd_bind( $esme, $pdu );
@@ -579,9 +586,12 @@ sub resp_error {
 	# Send submit_sm_resp
 	if ( $cmd eq 'submit_sm' ) {
 
+		$this->log( 'info', 'SEND: submit_sm_resp (seq:%s) (status:%s)', $pdu->{seq}, $status );
+
 		$esme->{conn}->submit_sm_resp(
 			seq    => $pdu->{seq},
 			status => $status,
+			async  => 1,
 		);
 
 	} elsif ( $cmd eq 'deliver_sm' ) {
@@ -589,6 +599,7 @@ sub resp_error {
 		$esme->{conn}->deliver_sm_resp(
 			seq    => $pdu->{seq},
 			status => $status,
+			async  => 1,
 		);
 
 	} elsif ( $cmd eq 'enquire_link' ) {
@@ -596,6 +607,15 @@ sub resp_error {
 		$esme->{conn}->enquire_link_resp(
 			seq    => $pdu->{seq},
 			status => $status,
+			async  => 1,
+		);
+
+	} else {
+
+		$esme->{conn}->generic_nack(
+			seq    => $pdu->{seq},
+			status => $status,
+			async  => 1,
 		);
 
 	}
