@@ -748,8 +748,8 @@ sub init_socket {
 
 	my ($this) = @_;
 
-	if ( $this->conf->{smpp_listen_addr} ) { $this->{smpp_listen_addr} = $this->conf->{smpp_listen_addr}; }
-	if ( $this->conf->{smpp_listen_port} ) { $this->{smpp_listen_port} = $this->conf->{smpp_listen_port}; }
+	if ( $this->conf->{smpp}->{listen_addr} ) { $this->{smpp_listen_addr} = $this->conf->{smpp}->{listen_addr}; }
+	if ( $this->conf->{smpp}->{listen_port} ) { $this->{smpp_listen_port} = $this->conf->{smpp}->{listen_port}; }
 
 	$this->listener(
 		Net::SMPP->new_listen(
