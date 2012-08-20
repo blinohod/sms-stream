@@ -138,12 +138,12 @@ sub process_mo_events {
 	my $sql = "select * from stream.queue
 		where dir = 'DLR'
 		and status = 'ROUTED'
-		and dst_app_id = 1
+		and dst_app_id = ?
 		and customer_id = ?
 		order by id asc limit 10";
 
 	my $sth = $this->dbh->prepare($sql);
-	$sth->execute($customer_id);
+	$sth->execute( $this->{app_id}, $customer_id );
 
 	while ( my $msg = $sth->fetchrow_hashref() ) {
 
@@ -690,6 +690,9 @@ sub start_hook {
 
 	$this->dbh( Colibri::DBI->get_dbh( %{ $this->conf->{db} } ) );
 	$this->cme( Colibri::CME->new( dbh => $this->dbh ) );
+
+	# Determine application ID (stream.apps)
+	$this->{app_id} = $this->cme->get_app_id('app_smppd');
 
 } ## end sub start_hook
 
